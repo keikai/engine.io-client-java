@@ -180,11 +180,24 @@ public class JSONValue {
 	 * @param s
 	 * @return the resulting string
 	 */
-	static String escape(String s){
+	public static String escape(String s){
 		if(s==null)
 			return null;
-		StringBuffer sb = new StringBuffer();
+		StringBuilder sb = new StringBuilder();
 		escape(s, sb);
+		return sb.toString();
+	}
+
+	public static String toJSONString(String key, Object value, StringBuilder sb) {
+		sb.append('\"');
+		if (key == null) {
+			sb.append("null");
+		} else {
+			escape(key, sb);
+		}
+
+		sb.append('\"').append(':');
+		sb.append(toJSONString(value));
 		return sb.toString();
 	}
 
@@ -192,7 +205,7 @@ public class JSONValue {
 	 * @param s - Must not be null.
 	 * @param sb
 	 */
-	static void escape(String s, StringBuffer sb) {
+	public static void escape(String s, StringBuilder sb) {
 		for(int i=0;i<s.length();i++){
 			char ch=s.charAt(i);
 			switch(ch){
