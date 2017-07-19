@@ -38,6 +38,12 @@ public class JSONObject<K, V> extends LinkedHashMap<K, V> implements Map<K, V>, 
 		super(initialCapacity, loadFactor, accessOrder);
 	}
 
+	public JSONObject(K key, V value) {
+		super(1);
+		put(key, value);
+	}
+
+
 	/**
 	 * Convert (aka., encode) a map to JSON text. The result is a JSON object.
 	 * If this map is also a JSONAware, JSONAware specific behaviors will be omitted at this top level.
