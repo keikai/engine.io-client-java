@@ -1,17 +1,18 @@
 package kk.socket.engineio.client;
 
-
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 
 import kk.socket.emitter.Emitter;
 import kk.socket.engineio.parser.Packet;
 import kk.socket.engineio.parser.Parser;
-import kk.socket.thread.EventThread;
 import kk.socket.utf8.UTF8Exception;
 import okhttp3.Call;
 import okhttp3.WebSocket;
 
 public abstract class Transport extends Emitter {
+
+	protected ReentrantLock lock = new ReentrantLock();
 
     protected enum ReadyState {
         OPENING, OPEN, CLOSED, PAUSED;
@@ -66,46 +67,49 @@ public abstract class Transport extends Emitter {
     }
 
     public Transport open() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                if (Transport.this.readyState == ReadyState.CLOSED || Transport.this.readyState == null) {
-                    Transport.this.readyState = ReadyState.OPENING;
-                    Transport.this.doOpen();
-                }
-            }
-        });
-        return this;
+		lock.lock();
+		try {
+			if (Transport.this.readyState == ReadyState.CLOSED
+					|| Transport.this.readyState == null) {
+				Transport.this.readyState = ReadyState.OPENING;
+				Transport.this.doOpen();
+			}
+		} finally {
+			lock.unlock();
+		}
+		return this;
     }
 
     public Transport close() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                if (Transport.this.readyState == ReadyState.OPENING || Transport.this.readyState == ReadyState.OPEN) {
-                    Transport.this.doClose();
-                    Transport.this.onClose();
-                }
-            }
-        });
+		lock.lock();
+		try {
+			if (Transport.this.readyState == ReadyState.OPENING
+					|| Transport.this.readyState == ReadyState.OPEN) {
+				Transport.this.doClose();
+				Transport.this.onClose();
+			}
+		} finally {
+			lock.unlock();
+		}
+
         return this;
     }
 
     public void send(final Packet[] packets) {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                if (Transport.this.readyState == ReadyState.OPEN) {
-                    try {
-                        Transport.this.write(packets);
-                    } catch (UTF8Exception err) {
-                        throw new RuntimeException(err);
-                    }
-                } else {
-                    throw new RuntimeException("Transport not open");
-                }
-            }
-        });
+		lock.lock();
+		try {
+			if (Transport.this.readyState == ReadyState.OPEN) {
+				try {
+					Transport.this.write(packets);
+				} catch (UTF8Exception err) {
+					throw new RuntimeException(err);
+				}
+			} else {
+				throw new RuntimeException("Transport not open");
+			}
+		} finally {
+			lock.unlock();
+		}
     }
 
     protected void onOpen() {

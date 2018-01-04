@@ -12,6 +12,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Logger;
 
 import kk.socket.emitter.Emitter;
@@ -36,6 +37,7 @@ public class Socket extends Emitter {
 
     private static final String PROBE_ERROR = "probe error";
 
+    private ReentrantLock lock = new ReentrantLock();
 
     private enum ReadyState {
         OPENING, OPEN, CLOSING, CLOSED;
@@ -232,32 +234,33 @@ public class Socket extends Emitter {
      * @return a reference to to this object.
      */
     public Socket open() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                String transportName;
-                if (Socket.this.rememberUpgrade && Socket.priorWebsocketSuccess && Socket.this.transports.contains(WebSocket.NAME)) {
-                    transportName = WebSocket.NAME;
-                } else if (0 == Socket.this.transports.size()) {
-                    // Emit error on next tick so it can be listened to
-                    final Socket self = Socket.this;
-                    EventThread.nextTick(new Runnable() {
-                        @Override
-                        public void run() {
-                            self.emit(Socket.EVENT_ERROR, new EngineIOException("No transports available"));
-                        }
-                    });
-                    return;
-                } else {
-                    transportName = Socket.this.transports.get(0);
-                }
-                Socket.this.readyState = ReadyState.OPENING;
-                Transport transport = Socket.this.createTransport(transportName);
-                Socket.this.setTransport(transport);
-                transport.open();
-            }
-        });
-        return this;
+		lock.lock();
+		try {
+			String transportName;
+			if (Socket.this.rememberUpgrade && Socket.priorWebsocketSuccess && Socket.this.transports.contains(WebSocket.NAME)) {
+				transportName = WebSocket.NAME;
+			} else if (0 == Socket.this.transports.size()) {
+				// Emit error on next tick so it can be listened to
+				final Socket self = Socket.this;
+				EventThread.nextTick(new Runnable() {
+					@Override
+					public void run() {
+						self.emit(Socket.EVENT_ERROR, new EngineIOException(
+								"No transports available"));
+					}
+				});
+				return this;
+			} else {
+				transportName = Socket.this.transports.get(0);
+			}
+			Socket.this.readyState = ReadyState.OPENING;
+			Transport transport = Socket.this.createTransport(transportName);
+			Socket.this.setTransport(transport);
+			transport.open();
+		} finally {
+			lock.unlock();
+		}
+		return this;
     }
 
     private Transport createTransport(String name) {
@@ -547,14 +550,15 @@ public class Socket extends Emitter {
         this.pingTimeoutTimer = this.getHeartbeatScheduler().schedule(new Runnable() {
             @Override
             public void run() {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (self.readyState == ReadyState.CLOSED) return;
-                        self.onClose("ping timeout");
-                    }
-                });
-            }
+				lock.lock();
+				try {
+					if (self.readyState == ReadyState.CLOSED)
+						return;
+					self.onClose("ping timeout");
+				} finally {
+					lock.unlock();
+				}
+			}
         }, timeout, TimeUnit.MILLISECONDS);
     }
 
@@ -567,15 +571,17 @@ public class Socket extends Emitter {
         this.pingIntervalTimer = this.getHeartbeatScheduler().schedule(new Runnable() {
             @Override
             public void run() {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        logger.fine(String.format("writing ping packet - expecting pong within %sms", self.pingTimeout));
-                        self.ping();
-                        self.onHeartbeat(self.pingTimeout);
-                    }
-                });
-            }
+            	lock.lock();
+            	try {
+					logger.fine(String.format(
+							"writing ping packet - expecting pong within %sms",
+							self.pingTimeout));
+					self.ping();
+					self.onHeartbeat(self.pingTimeout);
+				} finally {
+            		lock.unlock();
+				}
+			}
         }, this.pingInterval, TimeUnit.MILLISECONDS);
     }
 
@@ -583,18 +589,18 @@ public class Socket extends Emitter {
      * Sends a ping packet.
      */
     private void ping() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                Socket.this.sendPacket(Packet.PING, new Runnable() {
-                    @Override
-                    public void run() {
-                        Socket.this.emit(EVENT_PING);
-                    }
-                });
-            }
-        });
-    }
+		lock.lock();
+		try {
+			Socket.this.sendPacket(Packet.PING, new Runnable() {
+				@Override
+				public void run() {
+					Socket.this.emit(EVENT_PING);
+				}
+			});
+		} finally {
+			lock.unlock();
+		}
+	}
 
     private void onDrain() {
         for (int i = 0; i < this.prevBufferLen; i++) {
@@ -655,22 +661,22 @@ public class Socket extends Emitter {
      * @param fn callback to be called on drain
      */
     public void send(final String msg, final Runnable fn) {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                Socket.this.sendPacket(Packet.MESSAGE, msg, fn);
-            }
-        });
-    }
+    	lock.lock();
+    	try {
+			Socket.this.sendPacket(Packet.MESSAGE, msg, fn);
+		} finally {
+    		lock.unlock();
+		}
+	}
 
     public void send(final byte[] msg, final Runnable fn) {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                Socket.this.sendPacket(Packet.MESSAGE, msg, fn);
-            }
-        });
-    }
+		lock.lock();
+		try {
+			Socket.this.sendPacket(Packet.MESSAGE, msg, fn);
+		} finally {
+			lock.unlock();
+		}
+	}
 
     private void sendPacket(String type, Runnable fn) {
         this.sendPacket(new Packet(type), fn);
@@ -710,61 +716,64 @@ public class Socket extends Emitter {
      * @return a reference to to this object.
      */
     public Socket close() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                if (Socket.this.readyState == ReadyState.OPENING || Socket.this.readyState == ReadyState.OPEN) {
-                    Socket.this.readyState = ReadyState.CLOSING;
+    	lock.lock();
+    	try {
+			if (Socket.this.readyState == ReadyState.OPENING
+					|| Socket.this.readyState == ReadyState.OPEN) {
+				Socket.this.readyState = ReadyState.CLOSING;
 
-                    final Socket self = Socket.this;
+				final Socket self = Socket.this;
 
-                    final Runnable close = new Runnable() {
-                        @Override
-                        public void run() {
-                            self.onClose("forced close");
-                            logger.fine("socket closing - telling transport to close");
-                            self.transport.close();
-                        }
-                    };
+				final Runnable close = new Runnable() {
+					@Override
+					public void run() {
+						self.onClose("forced close");
+						logger.fine(
+								"socket closing - telling transport to close");
+						self.transport.close();
+					}
+				};
 
-                    final Listener[] cleanupAndClose = new Listener[1];
-                    cleanupAndClose[0] = new Listener() {
-                        @Override
-                        public void call(Object ...args) {
-                            self.off(EVENT_UPGRADE, cleanupAndClose[0]);
-                            self.off(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
-                            close.run();
-                        }
-                    };
+				final Listener[] cleanupAndClose = new Listener[1];
+				cleanupAndClose[0] = new Listener() {
+					@Override
+					public void call(Object... args) {
+						self.off(EVENT_UPGRADE, cleanupAndClose[0]);
+						self.off(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
+						close.run();
+					}
+				};
 
-                    final Runnable waitForUpgrade = new Runnable() {
-                        @Override
-                        public void run() {
-                            // wait for updade to finish since we can't send packets while pausing a transport
-                            self.once(EVENT_UPGRADE, cleanupAndClose[0]);
-                            self.once(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
-                        }
-                    };
+				final Runnable waitForUpgrade = new Runnable() {
+					@Override
+					public void run() {
+						// wait for updade to finish since we can't send packets while pausing a transport
+						self.once(EVENT_UPGRADE, cleanupAndClose[0]);
+						self.once(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
+					}
+				};
 
-                    if (Socket.this.writeBuffer.size() > 0) {
-                        Socket.this.once(EVENT_DRAIN, new Listener() {
-                            @Override
-                            public void call(Object... args) {
-                                if (Socket.this.upgrading) {
-                                    waitForUpgrade.run();
-                                } else {
-                                    close.run();
-                                }
-                            }
-                        });
-                    } else if (Socket.this.upgrading) {
-                        waitForUpgrade.run();
-                    } else {
-                        close.run();
-                    }
-                }
-            }
-        });
+				if (Socket.this.writeBuffer.size() > 0) {
+					Socket.this.once(EVENT_DRAIN, new Listener() {
+						@Override
+						public void call(Object... args) {
+							if (Socket.this.upgrading) {
+								waitForUpgrade.run();
+							} else {
+								close.run();
+							}
+						}
+					});
+				} else if (Socket.this.upgrading) {
+					waitForUpgrade.run();
+				} else {
+					close.run();
+				}
+			}
+		} finally {
+    		lock.unlock();
+		}
+
         return this;
     }
 

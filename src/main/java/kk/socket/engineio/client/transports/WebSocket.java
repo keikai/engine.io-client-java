@@ -51,13 +51,13 @@ public class WebSocket extends Transport {
             @Override
             public void onOpen(okhttp3.WebSocket webSocket, Response response) {
                 final Map<String, List<String>> headers = response.headers().toMultimap();
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.emit(EVENT_RESPONSE_HEADERS, headers);
-                        self.onOpen();
-                    }
-                });
+				lock.lock();
+				try {
+					self.emit(EVENT_RESPONSE_HEADERS, headers);
+					self.onOpen();
+				} finally {
+					lock.unlock();
+				};
             }
 
             @Override
@@ -65,49 +65,49 @@ public class WebSocket extends Transport {
                 if (text == null) {
                     return;
                 }
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                    self.onData(text);
-                    }
-                });
-            }
+				lock.lock();
+				try {
+					self.onData(text);
+				} finally {
+					lock.unlock();
+				}
+			}
 
             @Override
             public void onMessage(okhttp3.WebSocket webSocket, final ByteString bytes) {
                 if (bytes == null) {
                     return;
                 }
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onData(bytes.toByteArray());
-                    }
-                });
-            }
+				lock.lock();
+				try {
+    	            self.onData(bytes.toByteArray());
+				} finally {
+					lock.unlock();
+				}
+			}
 
             @Override
             public void onClosed(okhttp3.WebSocket webSocket, int code, String reason) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onClose();
-                    }
-                });
-            }
+				lock.lock();
+				try {
+					self.onClose();
+				} finally {
+					lock.unlock();
+				}
+			}
 
             @Override
             public void onFailure(okhttp3.WebSocket webSocket, final Throwable t, Response response) {
                 if (!(t instanceof Exception)) {
                     return;
                 }
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onError("websocket error", (Exception) t);
-                    }
-                });
-            }
+				lock.lock();
+				try {
+					self.onError("websocket error", (Exception) t);
+				} finally {
+					lock.unlock();
+				}
+			}
         });
     }
 
