@@ -12,6 +12,7 @@ import java.util.logging.Logger;
 
 import kk.socket.emitter.Emitter;
 import kk.socket.engineio.client.Transport;
+import kk.socket.thread.EventThread;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.HttpUrl;
@@ -51,13 +52,13 @@ public class PollingXHR extends Polling {
         }).on(Request.EVENT_RESPONSE_HEADERS, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-            	lock.lock();
-            	try {
-					self.emit(Transport.EVENT_RESPONSE_HEADERS, args[0]);
-				} finally {
-            		lock.unlock();
-				}
-			}
+                EventThread.exec(new Runnable() {
+                    @Override
+                    public void run() {
+                        self.emit(Transport.EVENT_RESPONSE_HEADERS, args[0]);
+                    }
+                });
+            }
         });
         return req;
     }
@@ -72,27 +73,25 @@ public class PollingXHR extends Polling {
         req.on(Request.EVENT_SUCCESS, new Emitter.Listener() {
             @Override
             public void call(Object... args) {
-                lock.lock();
-                try {
-					fn.run();
-				} finally {
-                	lock.unlock();
-				}
-			}
+                EventThread.exec(new Runnable() {
+                    @Override
+                    public void run() {
+                        fn.run();
+                    }
+                });
+            }
         });
         req.on(Request.EVENT_ERROR, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-            	lock.lock();
-            	try {
-					Exception err = args.length > 0 && args[0] instanceof Exception ?
-							(Exception) args[0] :
-							null;
-					self.onError("xhr post error", err);
-				} finally {
-            		lock.unlock();
-				}
-			}
+                EventThread.exec(new Runnable() {
+                    @Override
+                    public void run() {
+                        Exception err = args.length > 0 && args[0] instanceof Exception ? (Exception)args[0] : null;
+                        self.onError("xhr post error", err);
+                    }
+                });
+            }
         });
         req.create();
     }
@@ -105,32 +104,30 @@ public class PollingXHR extends Polling {
         req.on(Request.EVENT_DATA, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-				lock.lock();
-				try {
-					Object arg = args.length > 0 ? args[0] : null;
-					if (arg instanceof String) {
-						self.onData((String) arg);
-					} else if (arg instanceof byte[]) {
-						self.onData((byte[]) arg);
-					}
-				} finally {
-					lock.unlock();
-				}
-			}
+                EventThread.exec(new Runnable() {
+                    @Override
+                    public void run() {
+                        Object arg = args.length > 0 ? args[0] : null;
+                        if (arg instanceof String) {
+                            self.onData((String)arg);
+                        } else if (arg instanceof byte[]) {
+                            self.onData((byte[])arg);
+                        }
+                    }
+                });
+            }
         });
         req.on(Request.EVENT_ERROR, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-            	lock.lock();
-            	try {
-					Exception err = args.length > 0 && args[0] instanceof Exception ?
-							(Exception) args[0] :
-							null;
-					self.onError("xhr poll error", err);
-				} finally {
-            		lock.unlock();
-				}
-			}
+                EventThread.exec(new Runnable() {
+                    @Override
+                    public void run() {
+                        Exception err = args.length > 0 && args[0] instanceof Exception ? (Exception) args[0] : null;
+                        self.onError("xhr poll error", err);
+                    }
+                });
+            }
         });
         req.create();
     }

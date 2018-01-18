@@ -1,17 +1,18 @@
 package kk.socket.engineio.client.transports;
 
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.logging.Logger;
-
 import kk.socket.emitter.Emitter;
 import kk.socket.engineio.client.Transport;
 import kk.socket.engineio.parser.Packet;
 import kk.socket.engineio.parser.Parser;
 import kk.socket.parseqs.ParseQS;
+import kk.socket.thread.EventThread;
 import kk.socket.utf8.UTF8Exception;
 import kk.socket.yeast.Yeast;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.logging.Logger;
 
 abstract public class Polling extends Transport {
 
@@ -35,58 +36,58 @@ abstract public class Polling extends Transport {
     }
 
     public void pause(final Runnable onPause) {
-		lock.lock();
-		try {
-			final Polling self = Polling.this;
+        EventThread.exec(new Runnable() {
+            @Override
+            public void run() {
+                final Polling self = Polling.this;
 
-			Polling.this.readyState = ReadyState.PAUSED;
+                Polling.this.readyState = ReadyState.PAUSED;
 
-			final Runnable pause = new Runnable() {
-				@Override
-				public void run() {
-					logger.fine("paused");
-					self.readyState = ReadyState.PAUSED;
-					onPause.run();
-				}
-			};
+                final Runnable pause = new Runnable() {
+                    @Override
+                    public void run() {
+                        logger.fine("paused");
+                        self.readyState = ReadyState.PAUSED;
+                        onPause.run();
+                    }
+                };
 
-			if (Polling.this.polling || !Polling.this.writable) {
-				final int[] total = new int[] {0};
+                if (Polling.this.polling || !Polling.this.writable) {
+                    final int[] total = new int[]{0};
 
-				if (Polling.this.polling) {
-					logger.fine("we are currently polling - waiting to pause");
-					total[0]++;
-					Polling.this.once(EVENT_POLL_COMPLETE, new Emitter.Listener() {
-						@Override
-						public void call(Object... args) {
-							logger.fine("pre-pause polling complete");
-							if (--total[0] == 0) {
-								pause.run();
-							}
-						}
-					});
-				}
+                    if (Polling.this.polling) {
+                        logger.fine("we are currently polling - waiting to pause");
+                        total[0]++;
+                        Polling.this.once(EVENT_POLL_COMPLETE, new Emitter.Listener() {
+                            @Override
+                            public void call(Object... args) {
+                                logger.fine("pre-pause polling complete");
+                                if (--total[0] == 0) {
+                                    pause.run();
+                                }
+                            }
+                        });
+                    }
 
-				if (!Polling.this.writable) {
-					logger.fine("we are currently writing - waiting to pause");
-					total[0]++;
-					Polling.this.once(EVENT_DRAIN, new Emitter.Listener() {
-						@Override
-						public void call(Object... args) {
-							logger.fine("pre-pause writing complete");
-							if (--total[0] == 0) {
-								pause.run();
-							}
-						}
-					});
-				}
-			} else {
-				pause.run();
-			}
-		} finally {
-			lock.unlock();
-		}
-	}
+                    if (!Polling.this.writable) {
+                        logger.fine("we are currently writing - waiting to pause");
+                        total[0]++;
+                        Polling.this.once(EVENT_DRAIN, new Emitter.Listener() {
+                            @Override
+                            public void call(Object... args) {
+                                logger.fine("pre-pause writing complete");
+                                if (--total[0] == 0) {
+                                    pause.run();
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    pause.run();
+                }
+            }
+        });
+    }
 
     private void poll() {
         logger.fine("polling");
