@@ -11,7 +11,7 @@ import kk.socket.engineio.client.Transport;
 import kk.socket.engineio.parser.Packet;
 import kk.socket.engineio.parser.Parser;
 import kk.socket.parseqs.ParseQS;
-import kk.socket.thread.EventThread;
+import kk.socket.thread.EventThreadHelper;
 import kk.socket.utf8.UTF8Exception;
 import kk.socket.yeast.Yeast;
 import okhttp3.OkHttpClient;
@@ -51,13 +51,10 @@ public class WebSocket extends Transport {
             @Override
             public void onOpen(okhttp3.WebSocket webSocket, Response response) {
                 final Map<String, List<String>> headers = response.headers().toMultimap();
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.emit(EVENT_RESPONSE_HEADERS, headers);
-                        self.onOpen();
-                    }
-                });
+                EventThreadHelper.exec(() -> {
+					self.emit(EVENT_RESPONSE_HEADERS, headers);
+					self.onOpen();
+                }, service);
             }
 
             @Override
@@ -65,12 +62,7 @@ public class WebSocket extends Transport {
                 if (text == null) {
                     return;
                 }
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                    self.onData(text);
-                    }
-                });
+				EventThreadHelper.exec(() -> self.onData(text), service);
             }
 
             @Override
@@ -78,22 +70,12 @@ public class WebSocket extends Transport {
                 if (bytes == null) {
                     return;
                 }
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onData(bytes.toByteArray());
-                    }
-                });
+				EventThreadHelper.exec(() -> self.onData(bytes.toByteArray()), service);
             }
 
             @Override
             public void onClosed(okhttp3.WebSocket webSocket, int code, String reason) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onClose();
-                    }
-                });
+				EventThreadHelper.exec(() -> self.onClose(), service);
             }
 
             @Override
@@ -101,12 +83,7 @@ public class WebSocket extends Transport {
                 if (!(t instanceof Exception)) {
                     return;
                 }
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.onError("websocket error", (Exception) t);
-                    }
-                });
+				EventThreadHelper.exec(() -> self.onError("websocket error", (Exception) t), service);
             }
         });
     }
@@ -120,13 +97,11 @@ public class WebSocket extends Transport {
             public void run() {
                 // fake drain
                 // defer to next tick to allow Socket to clear writeBuffer
-                EventThread.nextTick(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.writable = true;
-                        self.emit(EVENT_DRAIN);
-                    }
-                });
+				// Jumper: don't use nextTick, it might run lately if a lot of concurrent requests coming.
+				EventThreadHelper.exec(() -> {
+					self.writable = true;
+					self.emit(EVENT_DRAIN);
+                }, service);
             }
         };
 

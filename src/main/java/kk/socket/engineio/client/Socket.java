@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -21,7 +22,7 @@ import kk.socket.engineio.client.transports.WebSocket;
 import kk.socket.engineio.parser.Packet;
 import kk.socket.engineio.parser.Parser;
 import kk.socket.parseqs.ParseQS;
-import kk.socket.thread.EventThread;
+import kk.socket.thread.EventThreadHelper;
 import okhttp3.OkHttpClient;
 
 
@@ -130,6 +131,7 @@ public class Socket extends Emitter {
 
     private ReadyState readyState;
     private ScheduledExecutorService heartbeatScheduler;
+    private ExecutorService service;
     private final Listener onHeartbeatAsListener = new Listener() {
         @Override
         public void call(Object... args) {
@@ -204,6 +206,9 @@ public class Socket extends Emitter {
         this.rememberUpgrade = opts.rememberUpgrade;
         this.callFactory = opts.callFactory != null ? opts.callFactory : defaultCallFactory;
         this.webSocketFactory = opts.webSocketFactory != null ? opts.webSocketFactory : defaultWebSocketFactory;
+		this.service = opts.service != null ? opts.service
+				: Executors
+						.newSingleThreadExecutor(new EventThreadHelper.NamedThreadFactory("socketPool", "eventThread"));
         if (callFactory == null) {
             if (defaultOkHttpClient == null) {
                 defaultOkHttpClient = new OkHttpClient();
@@ -231,34 +236,28 @@ public class Socket extends Emitter {
      *
      * @return a reference to to this object.
      */
-    public Socket open() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                String transportName;
-                if (Socket.this.rememberUpgrade && Socket.priorWebsocketSuccess && Socket.this.transports.contains(WebSocket.NAME)) {
-                    transportName = WebSocket.NAME;
-                } else if (0 == Socket.this.transports.size()) {
-                    // Emit error on next tick so it can be listened to
-                    final Socket self = Socket.this;
-                    EventThread.nextTick(new Runnable() {
-                        @Override
-                        public void run() {
-                            self.emit(Socket.EVENT_ERROR, new EngineIOException("No transports available"));
-                        }
-                    });
-                    return;
-                } else {
-                    transportName = Socket.this.transports.get(0);
-                }
-                Socket.this.readyState = ReadyState.OPENING;
-                Transport transport = Socket.this.createTransport(transportName);
-                Socket.this.setTransport(transport);
-                transport.open();
-            }
-        });
-        return this;
-    }
+	public Socket open() {
+		EventThreadHelper.exec(() -> {
+			String transportName;
+			if (Socket.this.rememberUpgrade && Socket.priorWebsocketSuccess
+					&& Socket.this.transports.contains(WebSocket.NAME)) {
+				transportName = WebSocket.NAME;
+			} else if (0 == Socket.this.transports.size()) {
+				// Emit error on next tick so it can be listened to
+				EventThreadHelper.nextTick(
+						() -> Socket.this.emit(Socket.EVENT_ERROR, new EngineIOException("No transports available")),
+						service);
+				return;
+			} else {
+				transportName = Socket.this.transports.get(0);
+			}
+			Socket.this.readyState = ReadyState.OPENING;
+			Transport transport = Socket.this.createTransport(transportName);
+			Socket.this.setTransport(transport);
+			transport.open();
+		}, service);
+		return this;
+	}
 
     private Transport createTransport(String name) {
         logger.fine(String.format("creating transport '%s'", name));
@@ -282,6 +281,7 @@ public class Socket extends Emitter {
         opts.socket = this;
         opts.callFactory = this.callFactory;
         opts.webSocketFactory = this.webSocketFactory;
+        opts.service = this.service;
 
         Transport transport;
         if (WebSocket.NAME.equals(name)) {
@@ -363,24 +363,21 @@ public class Socket extends Emitter {
                             Socket.priorWebsocketSuccess = WebSocket.NAME.equals(transport[0].name);
 
                             logger.fine(String.format("pausing current transport '%s'", self.transport.name));
-                            ((Polling)self.transport).pause(new Runnable() {
-                                @Override
-                                public void run() {
-                                    if (failed[0]) return;
-                                    if (ReadyState.CLOSED == self.readyState) return;
+                            ((Polling)self.transport).pause(() -> {
+								if (failed[0]) return;
+								if (ReadyState.CLOSED == self.readyState) return;
 
-                                    logger.fine("changing transport and sending upgrade packet");
+								logger.fine("changing transport and sending upgrade packet");
 
-                                    cleanup[0].run();
+								cleanup[0].run();
 
-                                    self.setTransport(transport[0]);
-                                    Packet packet = new Packet(Packet.UPGRADE);
-                                    transport[0].send(new Packet[]{packet});
-                                    self.emit(EVENT_UPGRADE, transport[0]);
-                                    transport[0] = null;
-                                    self.upgrading = false;
-                                    self.flush();
-                                }
+								self.setTransport(transport[0]);
+								Packet packet = new Packet(Packet.UPGRADE);
+								transport[0].send(new Packet[]{packet});
+								self.emit(EVENT_UPGRADE, transport[0]);
+								transport[0] = null;
+								self.upgrading = false;
+								self.flush();
                             });
                         } else {
                             logger.fine(String.format("probe transport '%s' failed", name));
@@ -457,15 +454,12 @@ public class Socket extends Emitter {
             }
         };
 
-        cleanup[0] = new Runnable() {
-            @Override
-            public void run() {
-                transport[0].off(Transport.EVENT_OPEN, onTransportOpen);
-                transport[0].off(Transport.EVENT_ERROR, onerror);
-                transport[0].off(Transport.EVENT_CLOSE, onTransportClose);
-                self.off(EVENT_CLOSE, onclose);
-                self.off(EVENT_UPGRADING, onupgrade);
-            }
+        cleanup[0] = () -> {
+			transport[0].off(Transport.EVENT_OPEN, onTransportOpen);
+			transport[0].off(Transport.EVENT_ERROR, onerror);
+			transport[0].off(Transport.EVENT_CLOSE, onTransportClose);
+			self.off(EVENT_CLOSE, onclose);
+			self.off(EVENT_UPGRADING, onupgrade);
         };
 
         transport[0].once(Transport.EVENT_OPEN, onTransportOpen);
@@ -544,18 +538,13 @@ public class Socket extends Emitter {
         }
 
         final Socket self = this;
-        this.pingTimeoutTimer = this.getHeartbeatScheduler().schedule(new Runnable() {
-            @Override
-            public void run() {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (self.readyState == ReadyState.CLOSED) return;
-                        self.onClose("ping timeout");
-                    }
-                });
-            }
-        }, timeout, TimeUnit.MILLISECONDS);
+		this.pingTimeoutTimer = this.getHeartbeatScheduler().schedule(() -> {
+			EventThreadHelper.exec(() -> {
+				if (self.readyState == ReadyState.CLOSED)
+					return;
+				self.onClose("ping timeout");
+			}, service);
+		}, timeout, TimeUnit.MILLISECONDS);
     }
 
     private void setPing() {
@@ -564,36 +553,22 @@ public class Socket extends Emitter {
         }
 
         final Socket self = this;
-        this.pingIntervalTimer = this.getHeartbeatScheduler().schedule(new Runnable() {
-            @Override
-            public void run() {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        logger.fine(String.format("writing ping packet - expecting pong within %sms", self.pingTimeout));
-                        self.ping();
-                        self.onHeartbeat(self.pingTimeout);
-                    }
-                });
-            }
-        }, this.pingInterval, TimeUnit.MILLISECONDS);
+		this.pingIntervalTimer = this.getHeartbeatScheduler().schedule(() -> {
+			EventThreadHelper.exec(() -> {
+				logger.fine(String.format("writing ping packet - expecting pong within %sms", self.pingTimeout));
+				self.ping();
+				self.onHeartbeat(self.pingTimeout);
+			}, service);
+		}, this.pingInterval, TimeUnit.MILLISECONDS);
     }
 
     /**
      * Sends a ping packet.
      */
     private void ping() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                Socket.this.sendPacket(Packet.PING, new Runnable() {
-                    @Override
-                    public void run() {
-                        Socket.this.emit(EVENT_PING);
-                    }
-                });
-            }
-        });
+		EventThreadHelper.exec(() -> {
+			Socket.this.sendPacket(Packet.PING, () -> Socket.this.emit(EVENT_PING));
+		}, service);
     }
 
     private void onDrain() {
@@ -655,21 +630,11 @@ public class Socket extends Emitter {
      * @param fn callback to be called on drain
      */
     public void send(final String msg, final Runnable fn) {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                Socket.this.sendPacket(Packet.MESSAGE, msg, fn);
-            }
-        });
+        EventThreadHelper.exec(() -> Socket.this.sendPacket(Packet.MESSAGE, msg, fn), service);
     }
 
     public void send(final byte[] msg, final Runnable fn) {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                Socket.this.sendPacket(Packet.MESSAGE, msg, fn);
-            }
-        });
+        EventThreadHelper.exec(() -> Socket.this.sendPacket(Packet.MESSAGE, msg, fn), service);
     }
 
     private void sendPacket(String type, Runnable fn) {
@@ -701,6 +666,7 @@ public class Socket extends Emitter {
                 }
             });
         }
+
         this.flush();
     }
 
@@ -710,61 +676,52 @@ public class Socket extends Emitter {
      * @return a reference to to this object.
      */
     public Socket close() {
-        EventThread.exec(new Runnable() {
-            @Override
-            public void run() {
-                if (Socket.this.readyState == ReadyState.OPENING || Socket.this.readyState == ReadyState.OPEN) {
-                    Socket.this.readyState = ReadyState.CLOSING;
+        EventThreadHelper.exec(() -> {
+			if (Socket.this.readyState == ReadyState.OPENING || Socket.this.readyState == ReadyState.OPEN) {
+				Socket.this.readyState = ReadyState.CLOSING;
 
-                    final Socket self = Socket.this;
+				final Socket self = Socket.this;
 
-                    final Runnable close = new Runnable() {
-                        @Override
-                        public void run() {
-                            self.onClose("forced close");
-                            logger.fine("socket closing - telling transport to close");
-                            self.transport.close();
-                        }
-                    };
+				final Runnable close = () -> {
+					self.onClose("forced close");
+					logger.fine("socket closing - telling transport to close");
+					self.transport.close();
+				};
 
-                    final Listener[] cleanupAndClose = new Listener[1];
-                    cleanupAndClose[0] = new Listener() {
-                        @Override
-                        public void call(Object ...args) {
-                            self.off(EVENT_UPGRADE, cleanupAndClose[0]);
-                            self.off(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
-                            close.run();
-                        }
-                    };
+				final Listener[] cleanupAndClose = new Listener[1];
+				cleanupAndClose[0] = new Listener() {
+					@Override
+					public void call(Object ...args) {
+						self.off(EVENT_UPGRADE, cleanupAndClose[0]);
+						self.off(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
+						close.run();
+					}
+				};
 
-                    final Runnable waitForUpgrade = new Runnable() {
-                        @Override
-                        public void run() {
-                            // wait for updade to finish since we can't send packets while pausing a transport
-                            self.once(EVENT_UPGRADE, cleanupAndClose[0]);
-                            self.once(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
-                        }
-                    };
+				final Runnable waitForUpgrade = () -> {
+					// wait for updade to finish since we can't send packets while pausing a transport
+					self.once(EVENT_UPGRADE, cleanupAndClose[0]);
+					self.once(EVENT_UPGRADE_ERROR, cleanupAndClose[0]);
+				};
 
-                    if (Socket.this.writeBuffer.size() > 0) {
-                        Socket.this.once(EVENT_DRAIN, new Listener() {
-                            @Override
-                            public void call(Object... args) {
-                                if (Socket.this.upgrading) {
-                                    waitForUpgrade.run();
-                                } else {
-                                    close.run();
-                                }
-                            }
-                        });
-                    } else if (Socket.this.upgrading) {
-                        waitForUpgrade.run();
-                    } else {
-                        close.run();
-                    }
-                }
-            }
-        });
+				if (Socket.this.writeBuffer.size() > 0) {
+					Socket.this.once(EVENT_DRAIN, new Listener() {
+						@Override
+						public void call(Object... args) {
+							if (Socket.this.upgrading) {
+								waitForUpgrade.run();
+							} else {
+								close.run();
+							}
+						}
+					});
+				} else if (Socket.this.upgrading) {
+					waitForUpgrade.run();
+				} else {
+					close.run();
+				}
+			}
+        }, service);
         return this;
     }
 
@@ -858,6 +815,7 @@ public class Socket extends Emitter {
         public boolean rememberUpgrade;
         public String host;
         public String query;
+		public ExecutorService service;
 
 
         private static Options fromURI(URI uri, Options opts) {

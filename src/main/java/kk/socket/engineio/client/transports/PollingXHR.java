@@ -1,6 +1,5 @@
 package kk.socket.engineio.client.transports;
 
-
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
@@ -12,7 +11,7 @@ import java.util.logging.Logger;
 
 import kk.socket.emitter.Emitter;
 import kk.socket.engineio.client.Transport;
-import kk.socket.thread.EventThread;
+import kk.socket.thread.EventThreadHelper;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.HttpUrl;
@@ -52,12 +51,9 @@ public class PollingXHR extends Polling {
         }).on(Request.EVENT_RESPONSE_HEADERS, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        self.emit(Transport.EVENT_RESPONSE_HEADERS, args[0]);
-                    }
-                });
+				EventThreadHelper.exec(() -> {
+                     self.emit(Transport.EVENT_RESPONSE_HEADERS, args[0]);
+                }, service);
             }
         });
         return req;
@@ -73,24 +69,16 @@ public class PollingXHR extends Polling {
         req.on(Request.EVENT_SUCCESS, new Emitter.Listener() {
             @Override
             public void call(Object... args) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        fn.run();
-                    }
-                });
+				EventThreadHelper.exec(() -> fn.run(), service);
             }
         });
         req.on(Request.EVENT_ERROR, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        Exception err = args.length > 0 && args[0] instanceof Exception ? (Exception)args[0] : null;
-                        self.onError("xhr post error", err);
-                    }
-                });
+				EventThreadHelper.exec(() -> {
+					Exception err = args.length > 0 && args[0] instanceof Exception ? (Exception)args[0] : null;
+					self.onError("xhr post error", err);
+                }, service);
             }
         });
         req.create();
@@ -104,29 +92,23 @@ public class PollingXHR extends Polling {
         req.on(Request.EVENT_DATA, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        Object arg = args.length > 0 ? args[0] : null;
-                        if (arg instanceof String) {
-                            self.onData((String)arg);
-                        } else if (arg instanceof byte[]) {
-                            self.onData((byte[])arg);
-                        }
-                    }
-                });
+				EventThreadHelper.exec(() -> {
+					Object arg = args.length > 0 ? args[0] : null;
+					if (arg instanceof String) {
+						self.onData((String)arg);
+					} else if (arg instanceof byte[]) {
+						self.onData((byte[])arg);
+					}
+                }, service);
             }
         });
         req.on(Request.EVENT_ERROR, new Emitter.Listener() {
             @Override
             public void call(final Object... args) {
-                EventThread.exec(new Runnable() {
-                    @Override
-                    public void run() {
-                        Exception err = args.length > 0 && args[0] instanceof Exception ? (Exception) args[0] : null;
-                        self.onError("xhr poll error", err);
-                    }
-                });
+				EventThreadHelper.exec(() -> {
+					Exception err = args.length > 0 && args[0] instanceof Exception ? (Exception) args[0] : null;
+					self.onError("xhr poll error", err);
+                }, service);
             }
         });
         req.create();
