@@ -4,9 +4,9 @@
  */
 package kk.json;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 
 /**
@@ -14,7 +14,7 @@ import java.util.List;
  *
  * @author FangYidong<fangyidong@yahoo.com.cn>
  */
-public class JSONArray<T> extends LinkedList<T> implements List<T>, JSONAware {
+public class JSONArray<T> extends ArrayList<T> implements List<T>, JSONAware {
 	private static final long serialVersionUID = 3957988303675231981L;
 
 	public JSONArray() {

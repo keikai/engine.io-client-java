@@ -4,8 +4,8 @@
  */
 package kk.json;
 
+import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -14,7 +14,8 @@ import java.util.Map;
  *
  * @author FangYidong<fangyidong@yahoo.com.cn>
  */
-public class JSONObject<K, V> extends LinkedHashMap<K, V> implements Map<K, V>, JSONAware {
+public class JSONObject<K, V> extends HashMap<K, V>
+		implements Map<K, V>, JSONAware {
 	private static final long serialVersionUID = -503443796854799292L;
 
 	public JSONObject() {
@@ -31,11 +32,6 @@ public class JSONObject<K, V> extends LinkedHashMap<K, V> implements Map<K, V>, 
 
 	public JSONObject(Map<? extends K, ? extends V> m) {
 		super(m);
-	}
-
-	public JSONObject(int initialCapacity, float loadFactor,
-			boolean accessOrder) {
-		super(initialCapacity, loadFactor, accessOrder);
 	}
 
 	public JSONObject(K key, V value) {
