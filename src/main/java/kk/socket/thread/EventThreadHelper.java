@@ -149,12 +149,12 @@ public class EventThreadHelper {
 	public static void exec(Runnable task, ExecutorService service) {
 		if (service.isShutdown() || service.isTerminated()) {
 			task.run(); // run directly
-		}
-
-		if (((ExecutorServiceHelper) service).thread == Thread.currentThread()) {
-			task.run();
 		} else {
-			nextTick(task, service);
+			if (((ExecutorServiceHelper) service).thread == Thread.currentThread()) {
+				task.run();
+			} else {
+				nextTick(task, service);
+			}
 		}
 	}
 
