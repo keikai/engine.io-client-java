@@ -152,3 +152,6 @@ http://socketio.github.io/engine.io-client-java/apidocs/
 
 MIT
 
+## Who Uses
+
+* [Keikai](https://keikai.io) - a sophisticated spreadsheet for big data
