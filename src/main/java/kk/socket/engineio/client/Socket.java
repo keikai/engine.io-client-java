@@ -237,6 +237,10 @@ public class Socket extends Emitter {
      * @return a reference to to this object.
      */
 	public Socket open() {
+		if (this.service == null) {
+			this.service = Executors.newSingleThreadExecutor(new EventThreadHelper.NamedThreadFactory(
+							"socketPool", "eventThread"));
+		}
 		EventThreadHelper.exec(() -> {
 			String transportName;
 			if (Socket.this.rememberUpgrade && Socket.priorWebsocketSuccess
@@ -686,6 +690,10 @@ public class Socket extends Emitter {
 					self.onClose("forced close");
 					logger.fine("socket closing - telling transport to close");
 					self.transport.close();
+					if (service != null) {
+						service.shutdown();
+						service = null;
+					}
 				};
 
 				final Listener[] cleanupAndClose = new Listener[1];
@@ -719,6 +727,11 @@ public class Socket extends Emitter {
 					waitForUpgrade.run();
 				} else {
 					close.run();
+				}
+			} else {
+				if (service != null) {
+					service.shutdown();
+					service = null;
 				}
 			}
         }, service);
