@@ -691,7 +691,7 @@ public class Socket extends Emitter {
 					logger.fine("socket closing - telling transport to close");
 					self.transport.close();
 					if (service != null) {
-						service.shutdown();
+						EventThreadHelper.shutdownWithTimeout(service, 10, TimeUnit.MINUTES);
 						service = null;
 					}
 				};
@@ -730,7 +730,7 @@ public class Socket extends Emitter {
 				}
 			} else {
 				if (service != null) {
-					service.shutdown();
+					EventThreadHelper.shutdownWithTimeout(service, 10, TimeUnit.MINUTES);
 					service = null;
 				}
 			}

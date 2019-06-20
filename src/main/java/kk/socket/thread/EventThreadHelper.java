@@ -168,4 +168,22 @@ public class EventThreadHelper {
 			});
 		}
 	}
+
+	public static void shutdownWithTimeout(ExecutorService service, long timeout, TimeUnit unit) {
+		if (service.isShutdown() || service.isTerminated()) return;
+
+		service.shutdown();
+		CompletableFuture.runAsync(() -> {
+			try {
+				if (!service.awaitTermination(timeout, unit)) {
+					logger.log(Level.FINE,
+							"Service cannot shutdown gracefully after " + unit
+									.convert(timeout, TimeUnit.MINUTES) + " minutes.");
+					service.shutdownNow();
+				}
+			} catch (InterruptedException e) {
+				logger.log(Level.FINE, e.getMessage(), e);
+			}
+		});
+	}
 }
